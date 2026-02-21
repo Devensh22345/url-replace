@@ -33,7 +33,8 @@ class ChannelBot:
             "I automatically monitor channels I'm added to and:\n"
             "• Replace URLs with '<i>[Link Removed]</i>'\n"
             "• Replace usernames with default username\n"
-            "• Add username to posts without links/usernames\n\n"
+            "• Add username to posts without links/usernames\n"
+            "• <b>Skip posts</b> that contain whitelisted URLs or usernames\n\n"
             "<b>Commands:</b>\n"
             "• /set_username &lt;username&gt; - Set global username\n"
             "• /whitelist_usernames - Manage whitelisted usernames\n"
@@ -284,6 +285,9 @@ class ChannelBot:
             else:
                 text_parts.append("• <i>None</i>\n")
             
+            # Add note about skipping behavior
+            text_parts.append("\n<b>⚠️ Skip Behavior:</b> Posts containing whitelisted URLs or usernames are <b>not modified</b>")
+            
             # Add note if truncation happened
             if len(whitelist_usernames) > 10 or len(whitelist_urls) > 10:
                 text_parts.append("\n<i>Use /whitelist_usernames or /whitelist_urls to see full lists</i>")
@@ -329,6 +333,7 @@ class ChannelBot:
                     await context.bot.send_message(
                         chat_id=chat.id,
                         text="<b>✅ Bot activated!</b> I'll now monitor and modify posts in this channel.\n\n"
+                             "Posts containing whitelisted URLs or usernames will be skipped.\n"
                              "Use /settings to see current configuration.",
                         parse_mode=ParseMode.HTML
                     )
@@ -345,7 +350,7 @@ class ChannelBot:
             logger.error(f"Error in track_channel_member: {e}")
     
     async def process_channel_post(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Process and modify channel posts"""
+        """Process and modify channel posts - Skip posts with whitelisted content"""
         try:
             if not update.channel_post:
                 return
@@ -374,6 +379,37 @@ class ChannelBot:
             logger.info(f"Processing post in channel {channel_id}")
             logger.info(f"Whitelist usernames: {whitelist_usernames}")
             logger.info(f"Whitelist URLs: {whitelist_urls}")
+            
+            # ========== SKIP CHECK ==========
+            # Check if post contains any whitelisted URL
+            contains_whitelisted_url = False
+            if whitelist_urls:
+                urls = re.findall(URL_PATTERN, text)
+                for url in urls:
+                    for whitelisted_url in whitelist_urls:
+                        if whitelisted_url.lower() in url.lower():
+                            contains_whitelisted_url = True
+                            logger.info(f"Post contains whitelisted URL: {url} (matches {whitelisted_url})")
+                            break
+                    if contains_whitelisted_url:
+                        break
+            
+            # Check if post contains any whitelisted username
+            contains_whitelisted_username = False
+            if whitelist_usernames:
+                usernames = re.findall(USERNAME_PATTERN, text)
+                for username in usernames:
+                    full_username = f'@{username}'
+                    if full_username in whitelist_usernames:
+                        contains_whitelisted_username = True
+                        logger.info(f"Post contains whitelisted username: {full_username}")
+                        break
+            
+            # Skip post if it contains any whitelisted URL or username
+            if contains_whitelisted_url or contains_whitelisted_username:
+                logger.info(f"⏭️ SKIPPING post in channel {channel_id} - contains whitelisted content")
+                return
+            # ========== END SKIP CHECK ==========
             
             modified_text = text
             modifications_made = False
