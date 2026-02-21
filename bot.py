@@ -244,7 +244,7 @@ class ChannelBot:
             whitelist_urls = settings.get('whitelist_urls', [])
             bot_settings = settings.get('settings', {})
             
-            # Format whitelists for display
+            # Format whitelists for display - build strings without using backslashes in f-strings
             usernames_text = ""
             for uname in whitelist_usernames[:10]:  # Show first 10
                 usernames_text += f"• <code>{uname}</code>\n"
@@ -257,28 +257,41 @@ class ChannelBot:
             if len(whitelist_urls) > 10:
                 urls_text += f"• <i>... and {len(whitelist_urls) - 10} more</i>\n"
             
-            # Feature status with emojis
+            # Feature status with emojis - build status strings separately
             add_username_status = "✅ <b>Enabled</b>" if bot_settings.get('add_username_to_all', True) else "❌ <b>Disabled</b>"
             replace_links_status = "✅ <b>Enabled</b>" if bot_settings.get('replace_links', True) else "❌ <b>Disabled</b>"
             replace_usernames_status = "✅ <b>Enabled</b>" if bot_settings.get('replace_usernames', True) else "❌ <b>Disabled</b>"
             
-            text = (
-                f"<b>⚙️ Global Settings</b>\n\n"
-                f"<b>Default Username:</b> {username}\n\n"
-                f"<b>Features:</b>\n"
-                f"• Add username to all posts: {add_username_status}\n"
-                f"• Replace links: {replace_links_status}\n"
-                f"• Replace usernames: {replace_usernames_status}\n\n"
-                f"<b>Whitelisted Usernames:</b> ({len(whitelist_usernames)})\n"
-                f"{usernames_text if usernames_text else '• <i>None</i>\n'}"
-                f"\n<b>Whitelisted URLs:</b> ({len(whitelist_urls)})\n"
-                f"{urls_text if urls_text else '• <i>None</i>\n'}")
+            # Build the complete message without using backslashes inside f-string expressions
+            text_parts = []
+            text_parts.append("<b>⚙️ Global Settings</b>\n")
+            text_parts.append(f"<b>Default Username:</b> {username}\n")
+            text_parts.append("\n<b>Features:</b>\n")
+            text_parts.append(f"• Add username to all posts: {add_username_status}\n")
+            text_parts.append(f"• Replace links: {replace_links_status}\n")
+            text_parts.append(f"• Replace usernames: {replace_usernames_status}\n")
+            text_parts.append(f"\n<b>Whitelisted Usernames:</b> ({len(whitelist_usernames)})\n")
+            
+            if usernames_text:
+                text_parts.append(usernames_text)
+            else:
+                text_parts.append("• <i>None</i>\n")
+            
+            text_parts.append(f"\n<b>Whitelisted URLs:</b> ({len(whitelist_urls)})\n")
+            
+            if urls_text:
+                text_parts.append(urls_text)
+            else:
+                text_parts.append("• <i>None</i>\n")
             
             # Add note if truncation happened
             if len(whitelist_usernames) > 10 or len(whitelist_urls) > 10:
-                text += "\n<i>Use /whitelist_usernames or /whitelist_urls to see full lists</i>"
+                text_parts.append("\n<i>Use /whitelist_usernames or /whitelist_urls to see full lists</i>")
             
-            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+            # Join all parts into final message
+            final_text = "".join(text_parts)
+            
+            await update.message.reply_text(final_text, parse_mode=ParseMode.HTML)
                 
         except Exception as e:
             logger.error(f"Error in settings_command: {e}")
@@ -408,12 +421,14 @@ class ChannelBot:
                 
                 # Replace non-whitelisted URLs
                 if bot_settings.get('replace_links', True):
+                    LINK_REPLACEMENT = '<i>[Link Removed]</i>'  # Define outside function to avoid backslash issues
+                    
                     def replace_url(match):
                         url = match.group(0)
                         for whitelisted in whitelist_urls:
                             if whitelisted.lower() in url.lower():
                                 return url
-                        return '<i>[Link Removed]</i>'
+                        return LINK_REPLACEMENT
                     
                     modified_text = re.sub(URL_PATTERN, replace_url, modified_text)
                     modifications_made = True
@@ -436,7 +451,7 @@ class ChannelBot:
                 if not text.strip().endswith(default_username):
                     modified_text = f"{text}\n\n{default_username}"
                     modifications_made = True
-                    logger.info(f"Adding username to post without links/usernames")
+                    logger.info("Adding username to post without links/usernames")
             
             # If text was modified, edit the message
             if modifications_made and modified_text != text:
