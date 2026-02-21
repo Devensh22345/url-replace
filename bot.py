@@ -272,8 +272,7 @@ class ChannelBot:
                 f"<b>Whitelisted Usernames:</b> ({len(whitelist_usernames)})\n"
                 f"{usernames_text if usernames_text else '• <i>None</i>\n'}"
                 f"\n<b>Whitelisted URLs:</b> ({len(whitelist_urls)})\n"
-                f"{urls_text if urls_text else '• <i>None</i>\n'}"
-            )
+                f"{urls_text if urls_text else '• <i>None</i>\n'}")
             
             # Add note if truncation happened
             if len(whitelist_usernames) > 10 or len(whitelist_urls) > 10:
