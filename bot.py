@@ -22,9 +22,45 @@ logger = logging.getLogger(__name__)
 URL_PATTERN = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*|www\.[^\s]+'
 USERNAME_PATTERN = r'@(\w+)'
 
+# HTML tags pattern to preserve
+HTML_TAG_PATTERN = r'<[^>]+>'
+
 class ChannelBot:
     def __init__(self):
         self.application = None
+    
+    def extract_text_without_html(self, text):
+        """Remove HTML tags for processing but keep them for final output"""
+        # This function is used to check content without HTML tags
+        return re.sub(HTML_TAG_PATTERN, '', text)
+    
+    def process_with_html_preservation(self, original_text, process_func):
+        """
+        Process text while preserving HTML structure
+        This splits the text into HTML tags and content, processes content only,
+        then rejoins preserving the HTML structure
+        """
+        # Split by HTML tags
+        parts = re.split(HTML_TAG_PATTERN, original_text)
+        tags = re.findall(HTML_TAG_PATTERN, original_text)
+        
+        # Process only the content parts (even indices)
+        processed_parts = []
+        for i, part in enumerate(parts):
+            if i % 2 == 0:  # This is content, not a tag
+                processed_parts.append(process_func(part))
+            else:
+                processed_parts.append(part)  # This shouldn't happen as tags are at odd positions in split
+        
+        # Rebuild the text by interleaving content and tags
+        result = []
+        for i in range(max(len(processed_parts), len(tags))):
+            if i < len(processed_parts):
+                result.append(processed_parts[i])
+            if i < len(tags):
+                result.append(tags[i])
+        
+        return ''.join(result)
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start command"""
@@ -33,18 +69,16 @@ class ChannelBot:
             "I automatically monitor channels I'm added to and:\n"
             "• Replace URLs with '[Link Removed]'\n"
             "• Replace usernames with default username\n"
-            "• Add username to posts without links/usernames\n\n"
+            "• Add username to posts without links/usernames\n"
+            "• Preserve HTML formatting (<b>, <i>, <u>, etc.)\n\n"
             "**Commands:**\n"
             "/set_username <username> - Set global username\n"
-            "/whitelist_usernames - Show all whitelisted usernames\n"
-            "/whitelist_usernames add @username - Add username to whitelist\n"
-            "/whitelist_usernames remove @username - Remove username from whitelist\n"
-            "/whitelist_urls - Show all whitelisted URLs\n"
-            "/whitelist_urls add example.com - Add URL to whitelist\n"
-            "/whitelist_urls remove example.com - Remove URL from whitelist\n"
+            "/whitelist_usernames - Manage whitelisted usernames\n"
+            "/whitelist_urls - Manage whitelisted URLs\n"
             "/settings - Show current settings\n"
             "/channels - List all monitored channels\n"
-            "/help - Show this help message"
+            "/help - Show this help message",
+            parse_mode=ParseMode.MARKDOWN
         )
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -75,7 +109,10 @@ class ChannelBot:
             if not context.args:
                 current_settings = await db.get_global_settings()
                 current_username = current_settings.get('username', config.DEFAULT_USERNAME)
-                await update.message.reply_text(f"Current username: {current_username}\nUsage: /set_username @username")
+                await update.message.reply_text(
+                    f"Current username: {current_username}\n"
+                    f"Usage: /set_username @username"
+                )
                 return
             
             username = context.args[0]
@@ -83,7 +120,10 @@ class ChannelBot:
                 username = f'@{username}'
             
             await db.update_global_username(username)
-            await update.message.reply_text(f"✅ Global username set to {username}")
+            await update.message.reply_text(
+                f"✅ Global username set to {username}\n\n"
+                f"This username will be used in all channels."
+            )
         except Exception as e:
             logger.error(f"Error in set_username_command: {e}")
             await update.message.reply_text(f"❌ Error: {str(e)}")
@@ -121,7 +161,8 @@ class ChannelBot:
                 whitelist = await db.get_whitelist_usernames()
                 await update.message.reply_text(
                     f"✅ Added {username} to whitelist\n\n"
-                    f"Current whitelist:\n" + "\n".join(whitelist)
+                    f"Current whitelist ({len(whitelist)}):\n" + 
+                    ("\n".join(whitelist) if whitelist else "Empty")
                 )
             
             elif subcommand == "remove" and len(context.args) > 1:
@@ -135,10 +176,13 @@ class ChannelBot:
                 if whitelist:
                     await update.message.reply_text(
                         f"✅ Removed {username} from whitelist\n\n"
-                        f"Current whitelist:\n" + "\n".join(whitelist)
+                        f"Current whitelist ({len(whitelist)}):\n" + "\n".join(whitelist)
                     )
                 else:
-                    await update.message.reply_text(f"✅ Removed {username} from whitelist\n\nCurrent whitelist is empty.")
+                    await update.message.reply_text(
+                        f"✅ Removed {username} from whitelist\n\n"
+                        f"Current whitelist is empty."
+                    )
             
             else:
                 await update.message.reply_text(
@@ -160,9 +204,9 @@ class ChannelBot:
             if len(context.args) == 0:
                 whitelist = await db.get_whitelist_urls()
                 if whitelist:
-                    text = "📋 **Whitelisted URLs:**\n" + "\n".join(whitelist)
+                    text = "📋 **Whitelisted URLs/domains:**\n" + "\n".join(whitelist)
                 else:
-                    text = "📋 No URLs in whitelist."
+                    text = "📋 No URLs/domains in whitelist."
                 await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
                 return
             
@@ -171,9 +215,9 @@ class ChannelBot:
             if subcommand == "list":
                 whitelist = await db.get_whitelist_urls()
                 if whitelist:
-                    text = "📋 **Whitelisted URLs:**\n" + "\n".join(whitelist)
+                    text = "📋 **Whitelisted URLs/domains:**\n" + "\n".join(whitelist)
                 else:
-                    text = "📋 No URLs in whitelist."
+                    text = "📋 No URLs/domains in whitelist."
                 await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
             
             elif subcommand == "add" and len(context.args) > 1:
@@ -184,7 +228,8 @@ class ChannelBot:
                 whitelist = await db.get_whitelist_urls()
                 await update.message.reply_text(
                     f"✅ Added {url} to whitelist\n\n"
-                    f"Current whitelist:\n" + "\n".join(whitelist)
+                    f"Current whitelist ({len(whitelist)}):\n" + 
+                    ("\n".join(whitelist) if whitelist else "Empty")
                 )
             
             elif subcommand == "remove" and len(context.args) > 1:
@@ -196,18 +241,21 @@ class ChannelBot:
                 if whitelist:
                     await update.message.reply_text(
                         f"✅ Removed {url} from whitelist\n\n"
-                        f"Current whitelist:\n" + "\n".join(whitelist)
+                        f"Current whitelist ({len(whitelist)}):\n" + "\n".join(whitelist)
                     )
                 else:
-                    await update.message.reply_text(f"✅ Removed {url} from whitelist\n\nCurrent whitelist is empty.")
+                    await update.message.reply_text(
+                        f"✅ Removed {url} from whitelist\n\n"
+                        f"Current whitelist is empty."
+                    )
             
             else:
                 await update.message.reply_text(
                     "📝 **URL Whitelist Commands:**\n\n"
-                    "/whitelist_urls - Show all whitelisted URLs\n"
-                    "/whitelist_urls list - Show all whitelisted URLs\n"
-                    "/whitelist_urls add example.com - Add URL to whitelist\n"
-                    "/whitelist_urls remove example.com - Remove URL from whitelist",
+                    "/whitelist_urls - Show all whitelisted URLs/domains\n"
+                    "/whitelist_urls list - Show all whitelisted URLs/domains\n"
+                    "/whitelist_urls add example.com - Add URL/domain to whitelist\n"
+                    "/whitelist_urls remove example.com - Remove URL/domain from whitelist",
                     parse_mode=ParseMode.MARKDOWN
                 )
         except Exception as e:
@@ -224,9 +272,14 @@ class ChannelBot:
             whitelist_urls = settings.get('whitelist_urls', [])
             bot_settings = settings.get('settings', {})
             
-            # Format whitelists for display
-            usernames_text = "\n".join(whitelist_usernames) if whitelist_usernames else "None"
-            urls_text = "\n".join(whitelist_urls) if whitelist_urls else "None"
+            # Format whitelists for display (show first 5 if many)
+            usernames_text = "\n".join(whitelist_usernames[:5]) if whitelist_usernames else "None"
+            if len(whitelist_usernames) > 5:
+                usernames_text += f"\n... and {len(whitelist_usernames) - 5} more"
+                
+            urls_text = "\n".join(whitelist_urls[:5]) if whitelist_urls else "None"
+            if len(whitelist_urls) > 5:
+                urls_text += f"\n... and {len(whitelist_urls) - 5} more"
             
             text = (
                 f"⚙️ **Global Settings:**\n\n"
@@ -234,28 +287,13 @@ class ChannelBot:
                 f"**Features:**\n"
                 f"• Add username to all posts: {'✅' if bot_settings.get('add_username_to_all', True) else '❌'}\n"
                 f"• Replace links: {'✅' if bot_settings.get('replace_links', True) else '❌'}\n"
-                f"• Replace usernames: {'✅' if bot_settings.get('replace_usernames', True) else '❌'}\n\n"
+                f"• Replace usernames: {'✅' if bot_settings.get('replace_usernames', True) else '❌'}\n"
+                f"• Preserve HTML formatting: ✅ (Always enabled)\n\n"
                 f"**Whitelisted Usernames:** ({len(whitelist_usernames)})\n{usernames_text}\n\n"
-                f"**Whitelisted URLs:** ({len(whitelist_urls)})\n{urls_text}"
+                f"**Whitelisted URLs/Domains:** ({len(whitelist_urls)})\n{urls_text}"
             )
             
-            # Split message if too long
-            if len(text) > 4000:
-                await update.message.reply_text(
-                    f"⚙️ **Global Settings:**\n\n"
-                    f"**Default Username:** {username}\n\n"
-                    f"**Features:**\n"
-                    f"• Add username to all posts: {'✅' if bot_settings.get('add_username_to_all', True) else '❌'}\n"
-                    f"• Replace links: {'✅' if bot_settings.get('replace_links', True) else '❌'}\n"
-                    f"• Replace usernames: {'✅' if bot_settings.get('replace_usernames', True) else '❌'}\n\n"
-                    f"**Whitelisted Usernames:** ({len(whitelist_usernames)})\n"
-                    f"Use /whitelist_usernames to view the list\n\n"
-                    f"**Whitelisted URLs:** ({len(whitelist_urls)})\n"
-                    f"Use /whitelist_urls to view the list",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            else:
-                await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+            await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
                 
         except Exception as e:
             logger.error(f"Error in settings_command: {e}")
@@ -293,6 +331,7 @@ class ChannelBot:
                     await context.bot.send_message(
                         chat_id=chat.id,
                         text="✅ Bot activated! I'll now monitor and modify posts in this channel.\n\n"
+                             "I will preserve HTML formatting (<b>bold</b>, <i>italic</i>, etc.) in your posts.\n"
                              "Use /settings to see current configuration."
                     )
                 except:
@@ -308,7 +347,7 @@ class ChannelBot:
             logger.error(f"Error in track_channel_member: {e}")
     
     async def process_channel_post(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Process and modify channel posts"""
+        """Process and modify channel posts while preserving HTML"""
         try:
             if not update.channel_post:
                 return
@@ -322,9 +361,9 @@ class ChannelBot:
                 return
             
             message = update.channel_post
-            text = message.text or message.caption or ""
+            original_text = message.text or message.caption or ""
             
-            if not text:
+            if not original_text:
                 return
             
             # Get global settings
@@ -335,18 +374,19 @@ class ChannelBot:
             bot_settings = settings_data.get('settings', {})
             
             logger.info(f"Processing post in channel {channel_id}")
-            logger.info(f"Whitelist usernames: {whitelist_usernames}")
-            logger.info(f"Whitelist URLs: {whitelist_urls}")
+            logger.info(f"Original text with HTML: {original_text[:100]}...")
             
-            modified_text = text
-            modifications_made = False
+            # Extract text without HTML for checking content
+            text_without_html = self.extract_text_without_html(original_text)
+            logger.info(f"Text without HTML: {text_without_html[:100]}...")
             
             # Check if any modifications are needed
             needs_modification = False
+            has_non_whitelisted_content = False
             
             # Check for non-whitelisted URLs
             if bot_settings.get('replace_links', True):
-                urls = re.findall(URL_PATTERN, text)
+                urls = re.findall(URL_PATTERN, text_without_html)
                 non_whitelisted_urls = []
                 
                 for url in urls:
@@ -361,12 +401,13 @@ class ChannelBot:
                         non_whitelisted_urls.append(url)
                 
                 if non_whitelisted_urls:
+                    has_non_whitelisted_content = True
                     needs_modification = True
                     logger.info(f"Found non-whitelisted URLs: {non_whitelisted_urls}")
             
             # Check for non-whitelisted usernames
             if bot_settings.get('replace_usernames', True):
-                usernames = re.findall(USERNAME_PATTERN, text)
+                usernames = re.findall(USERNAME_PATTERN, text_without_html)
                 non_whitelisted_usernames = []
                 
                 for username in usernames:
@@ -375,15 +416,21 @@ class ChannelBot:
                         non_whitelisted_usernames.append(full_username)
                 
                 if non_whitelisted_usernames:
+                    has_non_whitelisted_content = True
                     needs_modification = True
                     logger.info(f"Found non-whitelisted usernames: {non_whitelisted_usernames}")
             
-            # If modifications are needed, apply them
+            modified_text = original_text
+            modifications_made = False
+            
+            # If modifications are needed, apply them while preserving HTML
             if needs_modification:
-                modified_text = text
                 
-                # Replace non-whitelisted URLs
-                if bot_settings.get('replace_links', True):
+                # Function to process URLs in content
+                def process_urls(content):
+                    if not bot_settings.get('replace_links', True):
+                        return content
+                    
                     def replace_url(match):
                         url = match.group(0)
                         for whitelisted in whitelist_urls:
@@ -391,11 +438,13 @@ class ChannelBot:
                                 return url
                         return '[Link Removed]'
                     
-                    modified_text = re.sub(URL_PATTERN, replace_url, modified_text)
-                    modifications_made = True
+                    return re.sub(URL_PATTERN, replace_url, content)
                 
-                # Replace non-whitelisted usernames
-                if bot_settings.get('replace_usernames', True):
+                # Function to process usernames in content
+                def process_usernames(content):
+                    if not bot_settings.get('replace_usernames', True):
+                        return content
+                    
                     def replace_username(match):
                         username = match.group(1)
                         full_username = f'@{username}'
@@ -403,27 +452,59 @@ class ChannelBot:
                             return full_username
                         return default_username
                     
-                    modified_text = re.sub(USERNAME_PATTERN, replace_username, modified_text)
-                    modifications_made = True
+                    return re.sub(USERNAME_PATTERN, replace_username, content)
+                
+                # Combine processing functions
+                def process_content(content):
+                    content = process_urls(content)
+                    content = process_usernames(content)
+                    return content
+                
+                # Process the text while preserving HTML structure
+                modified_text = self.process_with_html_preservation(original_text, process_content)
+                modifications_made = True
+                logger.info("Applied modifications while preserving HTML")
             
-            # Add username to bottom if no modifications were needed but setting enabled
+            # Add username to bottom if no non-whitelisted content was found but setting enabled
             elif bot_settings.get('add_username_to_all', True):
-                # Check if the post already has the username at the bottom
-                if not text.strip().endswith(default_username):
-                    modified_text = f"{text}\n\n{default_username}"
+                # Check if the post already has the username at the bottom (ignoring HTML)
+                if not text_without_html.strip().endswith(default_username.replace('@', '')) and \
+                   not text_without_html.strip().endswith(default_username):
+                    # Add username with proper HTML formatting (if needed)
+                    if re.search(HTML_TAG_PATTERN, original_text):
+                        # If original has HTML, add username without HTML to preserve formatting
+                        modified_text = f"{original_text}\n\n{default_username}"
+                    else:
+                        modified_text = f"{original_text}\n\n{default_username}"
+                    
                     modifications_made = True
                     logger.info(f"Adding username to post without links/usernames")
             
             # If text was modified, edit the message
-            if modifications_made and modified_text != text:
+            if modifications_made and modified_text != original_text:
                 try:
                     if message.text:
-                        await message.edit_text(modified_text)
+                        await message.edit_text(
+                            modified_text,
+                            parse_mode=ParseMode.HTML  # Use HTML parse mode
+                        )
                     elif message.caption:
-                        await message.edit_caption(caption=modified_text)
-                    logger.info(f"✅ Modified post in channel {channel_id}")
+                        await message.edit_caption(
+                            caption=modified_text,
+                            parse_mode=ParseMode.HTML  # Use HTML parse mode
+                        )
+                    logger.info(f"✅ Modified post in channel {channel_id} with HTML preserved")
                 except Exception as e:
                     logger.error(f"❌ Failed to edit message: {e}")
+                    # Try without parse mode if HTML parsing fails
+                    try:
+                        if message.text:
+                            await message.edit_text(modified_text)
+                        elif message.caption:
+                            await message.edit_caption(caption=modified_text)
+                        logger.info(f"✅ Modified post in channel {channel_id} without HTML parsing")
+                    except Exception as e2:
+                        logger.error(f"❌ Failed to edit message even without HTML: {e2}")
             
         except Exception as e:
             logger.error(f"Error in process_channel_post: {e}")
